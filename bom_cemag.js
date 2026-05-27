@@ -508,7 +508,7 @@ async function updateCarretasChunk(client, rows) {
     FROM (
       VALUES ${placeholders.join(', ')}
     ) AS data (${cols.join(', ')})
-    WHERE target.id = data.id
+    WHERE target.id = data.id::bigint
   `;
   await client.query(sql, values);
   return rows.length;
