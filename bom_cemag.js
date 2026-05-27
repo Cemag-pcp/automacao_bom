@@ -1,7 +1,9 @@
 // bom_cemag.js
 // Automação BOM CEMAG — busca produtos da API, filtra e processa em lotes de 100
-// Execução completa : node bom_cemag.js
-// Execução de teste : node bom_cemag.js --teste   (processa só os primeiros 20 itens)
+// Execução completa        : node bom_cemag.js
+// Execução de teste        : node bom_cemag.js --teste              (processa só os primeiros 20 itens)
+// Carreta específica       : node bom_cemag.js --carreta "FA4 FB"   (processa apenas a carreta informada)
+// Só tratar planilha       : node bom_cemag.js --tratar-only        (lê resultado_bom.xlsx, regera BOM TRATADO e sincroniza o banco)
 
 const { chromium } = require('playwright');
 const fs = require('fs');
@@ -13,11 +15,13 @@ const XLSX = require('xlsx');
 
 const MODO_TESTE = process.argv.includes('--teste');
 const MODO_TRATAR_ONLY = process.argv.includes('--tratar-only');
+const _argCarretaIdx = process.argv.indexOf('--carreta');
+const CARRETA_FILTRO = _argCarretaIdx !== -1 ? process.argv[_argCarretaIdx + 1] : null;
 const BATCH_SIZE = 100;
 const TESTE_SIZE = 1;
 const MAX_LOTES = null;
 const CORES = ['VJ', 'VM', 'AN', 'LC', 'LJ', 'AM', 'AV', 'CO'];
-const DB_SCHEMA = process.env.BASE_TESTE || 'public';
+const DB_SCHEMA = process.env.BASE_TESTE;
 const CARRETAS_TABLE_NAME = process.env.CARRETAS_EXPLODIDAS_TABLE || 'cadastro_carretasexplodidas';
 const ITENS_EXPLODIDOS_TABLE_NAME = process.env.ITENS_EXPLODIDOS_TABLE || 'cadastro_itensexplodidos';
 const CARRETAS_TABLE = `${DB_SCHEMA}.${CARRETAS_TABLE_NAME}`;
@@ -124,6 +128,16 @@ async function carregarItensExplodidos() {
 
 async function processarListaChaves() {
   const { codigoCarretas, carretasComCores, carretasBaseCompleto } = await puxandoCarretas();
+
+  if (CARRETA_FILTRO) {
+    const item = carretasBaseCompleto.find(i => i.codigo === CARRETA_FILTRO.trim());
+    if (!item) {
+      console.log(`Carreta "${CARRETA_FILTRO}" não encontrada na API.`);
+      return [];
+    }
+    console.log(`Modo carreta única: "${CARRETA_FILTRO}" (chave: ${item.chave})`);
+    return [item.chave];
+  }
 
   // Remove de carretasComCores os que têm base em codigoCarretas
   let comCoresFiltradas = [...carretasComCores];
@@ -514,17 +528,29 @@ async function updateCarretasChunk(client, rows) {
   return rows.length;
 }
 
-async function syncCarretasFromRows(sourceRows, { updateExisting = true, chunkSize = 1000 } = {}) {
+async function syncCarretasFromRows(
+  sourceRows,
+  { updateExisting = false, deleteMissing = false, deleteScopeCarretas = null, chunkSize = 1000 } = {}
+) {
   const normalizedRows = normalizeCarretasRows(sourceRows);
   const client = await getPgClient();
 
   try {
     await client.query('BEGIN');
-    const existingRes = await client.query(`
-      SELECT id, ${KEY_FIELDS.join(', ')}
-      FROM ${CARRETAS_TABLE}
-    `);
 
+    // Se deleteScopeCarretas informado, escopa a consulta (e o delete) apenas
+    // nessas carretas — outras carretas no banco não são afetadas.
+    let existingQuery = `SELECT id, ${KEY_FIELDS.join(', ')} FROM ${CARRETAS_TABLE}`;
+    const existingParams = [];
+    if (deleteScopeCarretas && deleteScopeCarretas.length > 0) {
+      existingQuery += ` WHERE carreta = ANY($1)`;
+      existingParams.push(deleteScopeCarretas);
+    }
+    const existingRes = await client.query(existingQuery, existingParams);
+
+    const existingKeys = new Set(
+      existingRes.rows.map((row) => JSON.stringify(KEY_FIELDS.map((field) => row[field] ?? null)))
+    );
     const existingMap = new Map(
       existingRes.rows.map((row) => [
         JSON.stringify(KEY_FIELDS.map((field) => row[field] ?? null)),
@@ -534,32 +560,45 @@ async function syncCarretasFromRows(sourceRows, { updateExisting = true, chunkSi
 
     const toCreate = [];
     const toUpdate = [];
-    const seen = new Set();
+    const seenKeys = new Set(existingKeys);
 
     for (const row of normalizedRows) {
       const key = JSON.stringify(KEY_FIELDS.map((field) => row[field] ?? null));
-      if (seen.has(key)) continue;
-      seen.add(key);
-
-      const existingId = existingMap.get(key);
-      if (!existingId) {
+      if (!seenKeys.has(key)) {
         toCreate.push(row);
+        seenKeys.add(key);
       } else if (updateExisting) {
-        toUpdate.push({ id: existingId, ...row });
+        const existingId = existingMap.get(key);
+        if (existingId) toUpdate.push({ id: existingId, ...row });
       }
     }
 
     let created = 0;
     let updated = 0;
+    let deleted = 0;
+
     for (const chunk of chunked(toCreate, chunkSize)) created += await insertCarretasChunk(client, chunk);
-    for (const chunk of chunked(toUpdate, chunkSize)) updated += await updateCarretasChunk(client, chunk);
+
+    if (updateExisting && toUpdate.length > 0) {
+      for (const chunk of chunked(toUpdate, chunkSize)) updated += await updateCarretasChunk(client, chunk);
+    }
+
+    if (deleteMissing) {
+      const incomingKeys = new Set(
+        normalizedRows.map((row) => JSON.stringify(KEY_FIELDS.map((field) => row[field] ?? null)))
+      );
+      const idsToDelete = [];
+      for (const [key, id] of existingMap) {
+        if (!incomingKeys.has(key)) idsToDelete.push(id);
+      }
+      for (const chunk of chunked(idsToDelete, chunkSize)) {
+        await client.query(`DELETE FROM ${CARRETAS_TABLE} WHERE id = ANY($1::bigint[])`, [chunk]);
+        deleted += chunk.length;
+      }
+    }
 
     await client.query('COMMIT');
-    return {
-      created,
-      updated,
-      existing_kept: existingRes.rows.length
-    };
+    return { created, updated, deleted, existing_kept: existingKeys.size };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -585,10 +624,14 @@ async function executarTratamentoSomente() {
   if (!wb.SheetNames.includes('BOM TRATADO')) wb.SheetNames.push('BOM TRATADO');
 
   XLSX.writeFile(wb, outPath);
-  const syncStats = await syncCarretasFromRows(dadosTratados);
+  const syncStats = await syncCarretasFromRows(dadosTratados, {
+    updateExisting: true,
+    deleteMissing: true,
+    deleteScopeCarretas: CARRETA_FILTRO ? [CARRETA_FILTRO] : null
+  });
   console.log(`Tratamento final concluído a partir da aba "${nomeAbaOrigem}".`);
   console.log(`Linhas tratadas: ${dadosTratados.length}`);
-  console.log(`Sync banco: created=${syncStats.created}, updated=${syncStats.updated}, existing_kept=${syncStats.existing_kept}`);
+  console.log(`Sync banco: created=${syncStats.created}, updated=${syncStats.updated}, deleted=${syncStats.deleted}, existing_kept=${syncStats.existing_kept}`);
   console.log(`Excel atualizado em: ${outPath}`);
 }
 
@@ -1258,8 +1301,12 @@ async function executarTratamentoSomente() {
       const wsTratado = XLSX.utils.json_to_sheet(dadosTratados);
       XLSX.utils.book_append_sheet(wb, wsTratado, 'BOM TRATADO');
       console.log(`Tratamento final concluído. Linhas tratadas: ${dadosTratados.length}`);
-      const syncStats = await syncCarretasFromRows(dadosTratados);
-      console.log(`Sync banco: created=${syncStats.created}, updated=${syncStats.updated}, existing_kept=${syncStats.existing_kept}`);
+      const syncStats = await syncCarretasFromRows(dadosTratados, {
+        updateExisting: true,
+        deleteMissing: true,
+        deleteScopeCarretas: CARRETA_FILTRO ? [CARRETA_FILTRO] : null
+      });
+      console.log(`Sync banco: created=${syncStats.created}, updated=${syncStats.updated}, deleted=${syncStats.deleted}, existing_kept=${syncStats.existing_kept}`);
     } catch (error) {
       console.log(`Falha no tratamento final: ${error.message}`);
     }
