@@ -1,0 +1,52 @@
+## Dependencies
+node_modules/
+
+## Environment and secrets
+.env
+.env.*
+!.env.example
+
+## Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+## Runtime and temp files
+tmp/
+temp/
+*.tmp
+*.temp
+*.pid
+*.seed
+*.stackdump
+
+## OS / editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
+
+## Playwright / browser artifacts
+playwright-report/
+test-results/
+output/
+.playwright/
+.playwright-mcp/
+
+## Local agent / tool state
+.claude/
+
+## Project-generated artifacts
+logs_dom/
+resultado_bom.xlsx
+*.csv
+
+## Python cache, if auxiliary scripts are added later
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
