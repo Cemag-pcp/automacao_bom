@@ -21,7 +21,7 @@ const BATCH_SIZE = 100;
 const TESTE_SIZE = 1;
 const MAX_LOTES = null;
 const CORES = ['VJ', 'VM', 'AN', 'LC', 'LJ', 'AM', 'AV', 'CO'];
-const DB_SCHEMA = process.env.BASE_TESTE;
+const DB_SCHEMA = process.env.BASE_PROD;
 const CARRETAS_TABLE_NAME = process.env.CARRETAS_EXPLODIDAS_TABLE || 'cadastro_carretasexplodidas';
 const ITENS_EXPLODIDOS_TABLE_NAME = process.env.ITENS_EXPLODIDOS_TABLE || 'cadastro_itensexplodidos';
 const CARRETAS_TABLE = `${DB_SCHEMA}.${CARRETAS_TABLE_NAME}`;
@@ -43,8 +43,8 @@ const ALL_MODEL_FIELDS = [
 ];
 const SOURCE_TO_MODEL = {
   'CODIGO': 'codigo_peca',
-  'DESCRIÃ‡ÃƒO': 'descricao_peca',
-  'MATÃ‰RIA PRIMA': 'mp_peca',
+  'DESCRIÇÃO': 'descricao_peca',
+  'MATÉRIA PRIMA': 'mp_peca',
   'TOTAL': 'total_peca',
   'PRIMEIRO PROCESSO': 'primeiro_processo',
   '2 PROCESSO': 'segundo_processo',
@@ -636,6 +636,13 @@ async function executarTratamentoSomente() {
 }
 
 (async () => {
+  console.log('── Argumentos recebidos ──────────────────────────────────');
+  console.log(`  process.argv : ${JSON.stringify(process.argv)}`);
+  console.log(`  MODO_TESTE   : ${MODO_TESTE}`);
+  console.log(`  MODO_TRATAR_ONLY : ${MODO_TRATAR_ONLY}`);
+  console.log(`  CARRETA_FILTRO   : ${JSON.stringify(CARRETA_FILTRO)}`);
+  console.log('──────────────────────────────────────────────────────────');
+
   if (MODO_TRATAR_ONLY) {
     await executarTratamentoSomente();
     return;
