@@ -12,6 +12,9 @@ const crypto = require('crypto');
 const { Client } = require('pg');
 require('dotenv').config();
 const XLSX = require('xlsx');
+const ROOT_DIR = __dirname;
+const RESULTADO_BOM_PATH = path.join(ROOT_DIR, 'resultado_bom.xlsx');
+const LOGS_DIR = path.join(ROOT_DIR, 'logs_dom');
 
 const MODO_TESTE = process.argv.includes('--teste');
 const MODO_TRATAR_ONLY = process.argv.includes('--tratar-only');
@@ -608,7 +611,7 @@ async function syncCarretasFromRows(
 }
 
 async function executarTratamentoSomente() {
-  const outPath = 'C:\\bom_cemag\\resultado_bom.xlsx';
+  const outPath = RESULTADO_BOM_PATH;
   if (!fs.existsSync(outPath)) {
     throw new Error(`Arquivo não encontrado para tratamento: ${outPath}`);
   }
@@ -1036,7 +1039,7 @@ async function executarTratamentoSomente() {
 
   async function logarElementosPaginaCompletos(tag = 'extracao') {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const baseDir = path.join('C:\\bom_cemag', 'logs_dom', `${stamp}_${tag}`);
+    const baseDir = path.join(LOGS_DIR, `${stamp}_${tag}`);
     fs.mkdirSync(baseDir, { recursive: true });
 
     const frames = page.frames();
@@ -1318,7 +1321,7 @@ async function executarTratamentoSomente() {
       console.log(`Falha no tratamento final: ${error.message}`);
     }
 
-    const outPath = 'C:\\bom_cemag\\resultado_bom.xlsx';
+    const outPath = RESULTADO_BOM_PATH;
     XLSX.writeFile(wb, outPath);
     console.log(`Excel salvo em: ${outPath}`);
   } else {
