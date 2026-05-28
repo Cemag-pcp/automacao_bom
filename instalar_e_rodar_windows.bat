@@ -26,11 +26,11 @@ git pull --rebase
 if errorlevel 1 exit /b 1
 
 echo [2/4] Instalando dependencias npm...
-npm install
+call npm install
 if errorlevel 1 exit /b 1
 
 echo [3/4] Instalando navegador do Playwright...
-npx playwright install chromium
+call npx playwright install chromium
 if errorlevel 1 exit /b 1
 
 echo [4/4] Executando automacao...
