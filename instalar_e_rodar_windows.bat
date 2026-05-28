@@ -34,6 +34,15 @@ npx playwright install chromium
 if errorlevel 1 exit /b 1
 
 echo [4/4] Executando automacao...
+rem Evita que variaveis de ambiente herdadas do Windows sobrescrevam o .env do projeto.
+set "DB_HOST="
+set "DB_PORT="
+set "DB_NAME="
+set "DB_USER="
+set "DB_PASSWORD="
+set "BASE_PROD="
+set "CARRETAS_EXPLODIDAS_TABLE="
+set "ITENS_EXPLODIDOS_TABLE="
 node bom_cemag.js
 set EXIT_CODE=%ERRORLEVEL%
 
