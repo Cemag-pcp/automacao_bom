@@ -20,7 +20,7 @@ const MODO_TESTE = process.argv.includes('--teste');
 const MODO_TRATAR_ONLY = process.argv.includes('--tratar-only');
 const _argCarretaIdx = process.argv.indexOf('--carreta');
 const CARRETA_FILTRO = _argCarretaIdx !== -1 ? process.argv[_argCarretaIdx + 1] : null;
-const BATCH_SIZE = 1;
+const BATCH_SIZE = 100;
 const TESTE_SIZE = 1;
 const MAX_LOTES = null;
 const CORES = ['VJ', 'VM', 'AN', 'LC', 'LJ', 'AM', 'AV', 'CO'];
@@ -816,23 +816,39 @@ async function executarTratamentoSomente() {
     if (ok) { await clickNode(ok); await page.waitForTimeout(800); }
   }
 
-  async function waitForLoadingToFinish(timeoutMs = 180000) {
-    await page.waitForTimeout(1000);
+  async function waitForLoadingToFinish(timeoutMs = 600000) {
+    function isDialogOpen(root) {
+      let open = false;
+      function check(node) {
+        const cls = attrs(node).class || '';
+        if (cls.includes('wf-progress-dialog') && cls.includes('mdc-dialog--open')) open = true;
+        for (const c of node.children || []) check(c);
+        for (const s of node.shadowRoots || []) check(s);
+        if (node.contentDocument) check(node.contentDocument);
+      }
+      check(root);
+      return open;
+    }
+
+    // Aguarda o diálogo de progresso APARECER (até 20 s) para garantir que o
+    // relatório realmente começou a carregar antes de verificar o término.
+    const appearDeadline = Date.now() + 20000;
+    let dialogAppeared = false;
+    while (Date.now() < appearDeadline) {
+      if (isDialogOpen(await dom())) { dialogAppeared = true; break; }
+      await page.waitForTimeout(500);
+    }
+    if (!dialogAppeared) {
+      console.log('    [AVISO] Diálogo de carregamento não apareceu — seguindo mesmo assim.');
+    } else {
+      console.log('    Diálogo de carregamento detectado. Aguardando conclusão...');
+    }
+
+    // Agora aguarda o diálogo DESAPARECER (relatório 100% carregado).
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      const root = await dom();
-      let dialogOpen = false;
-      function checkDialog(node) {
-        const cls = attrs(node).class || '';
-        if (cls.includes('wf-progress-dialog') && cls.includes('mdc-dialog--open'))
-          dialogOpen = true;
-        for (const c of node.children || []) checkDialog(c);
-        for (const s of node.shadowRoots || []) checkDialog(s);
-        if (node.contentDocument) checkDialog(node.contentDocument);
-      }
-      checkDialog(root);
-      if (!dialogOpen) break;
-      await page.waitForTimeout(500);
+      if (!isDialogOpen(await dom())) break;
+      await page.waitForTimeout(1000);
     }
   }
 
@@ -870,7 +886,7 @@ async function executarTratamentoSomente() {
 
         console.log(`    Linhas atuais na tabela: ${totalLinhas} | ciclos estáveis: ${ciclosEstaveis}`);
 
-        if (totalLinhas > 0 && ciclosEstaveis >= 3) {
+        if (totalLinhas > 0 && ciclosEstaveis >= 6) {
           console.log(`    Tabela estabilizada com ${totalLinhas} linhas.`);
           return;
         }
@@ -881,7 +897,7 @@ async function executarTratamentoSomente() {
         ciclosEstaveis = 0;
       }
 
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(3000);
     }
 
     console.log('    [AVISO] Tabela não estabilizou antes do timeout; seguindo com a extração.');
