@@ -20,7 +20,7 @@ const MODO_TESTE = process.argv.includes('--teste');
 const MODO_TRATAR_ONLY = process.argv.includes('--tratar-only');
 const _argCarretaIdx = process.argv.indexOf('--carreta');
 const CARRETA_FILTRO = _argCarretaIdx !== -1 ? process.argv[_argCarretaIdx + 1] : null;
-const BATCH_SIZE = 100;
+const BATCH_SIZE = 1;
 const TESTE_SIZE = 1;
 const MAX_LOTES = null;
 const CORES = ['VJ', 'VM', 'AN', 'LC', 'LJ', 'AM', 'AV', 'CO'];
