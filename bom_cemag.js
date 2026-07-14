@@ -133,13 +133,14 @@ async function processarListaChaves() {
   const { codigoCarretas, carretasComCores, carretasBaseCompleto } = await puxandoCarretas();
 
   if (CARRETA_FILTRO) {
-    const item = carretasBaseCompleto.find(i => i.codigo === CARRETA_FILTRO.trim());
-    if (!item) {
-      console.log(`Carreta "${CARRETA_FILTRO}" não encontrada na API.`);
-      return [];
+    const codigoFiltro = CARRETA_FILTRO.trim();
+    const item = carretasBaseCompleto.find(i => i.codigo === codigoFiltro);
+    if (item) {
+      console.log(`Modo carreta única: "${codigoFiltro}" (chave: ${item.chave})`);
+      return [item.chave];
     }
-    console.log(`Modo carreta única: "${CARRETA_FILTRO}" (chave: ${item.chave})`);
-    return [item.chave];
+    console.log(`Carreta "${codigoFiltro}" não encontrada na API. Usando o código informado diretamente.`);
+    return [codigoFiltro];
   }
 
   // Remove de carretasComCores os que têm base em codigoCarretas
