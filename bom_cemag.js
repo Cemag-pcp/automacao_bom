@@ -3,6 +3,8 @@
 // Execução completa        : node bom_cemag.js
 // Execução de teste        : node bom_cemag.js --teste              (processa só os primeiros 20 itens)
 // Carreta específica       : node bom_cemag.js --carreta "FA4 FB"   (processa apenas a carreta informada)
+// Lista de carretas        : node bom_cemag.js --carreta "COD1" --carreta "COD2" ...  (repita a flag para cada carreta)
+// Somente cadastro         : node bom_cemag.js --somente-cadastro  (processa apenas os itens de cadastro_itensexplodidos, ignora a API)
 // Só tratar planilha       : node bom_cemag.js --tratar-only        (lê resultado_bom.xlsx, regera BOM TRATADO e sincroniza o banco)
 
 const { chromium } = require('playwright');
@@ -18,8 +20,10 @@ const LOGS_DIR = path.join(ROOT_DIR, 'logs_dom');
 
 const MODO_TESTE = process.argv.includes('--teste');
 const MODO_TRATAR_ONLY = process.argv.includes('--tratar-only');
-const _argCarretaIdx = process.argv.indexOf('--carreta');
-const CARRETA_FILTRO = _argCarretaIdx !== -1 ? process.argv[_argCarretaIdx + 1] : null;
+const MODO_SOMENTE_CADASTRO = process.argv.includes('--somente-cadastro');
+const CARRETA_FILTRO = process.argv
+  .map((arg, i) => (arg === '--carreta' ? process.argv[i + 1] : null))
+  .filter(Boolean);
 const BATCH_SIZE = 100;
 const TESTE_SIZE = 1;
 const MAX_LOTES = null;
@@ -130,17 +134,29 @@ async function carregarItensExplodidos() {
 }
 
 async function processarListaChaves() {
+  if (MODO_SOMENTE_CADASTRO) {
+    const itensModel = await carregarItensExplodidos();
+    const listaFinal = [...new Set(itensModel)];
+    console.log(`Modo somente cadastro: ${listaFinal.length} itens de ${ITENS_EXPLODIDOS_TABLE}.`);
+    return listaFinal;
+  }
+
   const { codigoCarretas, carretasComCores, carretasBaseCompleto } = await puxandoCarretas();
 
-  if (CARRETA_FILTRO) {
-    const codigoFiltro = CARRETA_FILTRO.trim();
-    const item = carretasBaseCompleto.find(i => i.codigo === codigoFiltro);
-    if (item) {
-      console.log(`Modo carreta única: "${codigoFiltro}" (chave: ${item.chave})`);
-      return [item.chave];
+  if (CARRETA_FILTRO.length > 0) {
+    const resultado = [];
+    for (const codigoFiltroRaw of CARRETA_FILTRO) {
+      const codigoFiltro = codigoFiltroRaw.trim();
+      const item = carretasBaseCompleto.find(i => i.codigo === codigoFiltro);
+      if (item) {
+        console.log(`Modo lista de carretas: "${codigoFiltro}" (chave: ${item.chave})`);
+        resultado.push(item.chave);
+      } else {
+        console.log(`Carreta "${codigoFiltro}" não encontrada na API. Usando o código informado diretamente.`);
+        resultado.push(codigoFiltro);
+      }
     }
-    console.log(`Carreta "${codigoFiltro}" não encontrada na API. Usando o código informado diretamente.`);
-    return [codigoFiltro];
+    return [...new Set(resultado)];
   }
 
   // Remove de carretasComCores os que têm base em codigoCarretas
@@ -631,7 +647,7 @@ async function executarTratamentoSomente() {
   const syncStats = await syncCarretasFromRows(dadosTratados, {
     updateExisting: true,
     deleteMissing: true,
-    deleteScopeCarretas: CARRETA_FILTRO ? [CARRETA_FILTRO] : null
+    deleteScopeCarretas: CARRETA_FILTRO.length > 0 ? CARRETA_FILTRO : null
   });
   console.log(`Tratamento final concluído a partir da aba "${nomeAbaOrigem}".`);
   console.log(`Linhas tratadas: ${dadosTratados.length}`);
@@ -644,6 +660,7 @@ async function executarTratamentoSomente() {
   console.log(`  process.argv : ${JSON.stringify(process.argv)}`);
   console.log(`  MODO_TESTE   : ${MODO_TESTE}`);
   console.log(`  MODO_TRATAR_ONLY : ${MODO_TRATAR_ONLY}`);
+  console.log(`  MODO_SOMENTE_CADASTRO : ${MODO_SOMENTE_CADASTRO}`);
   console.log(`  CARRETA_FILTRO   : ${JSON.stringify(CARRETA_FILTRO)}`);
   console.log('──────────────────────────────────────────────────────────');
 
@@ -1331,7 +1348,7 @@ async function executarTratamentoSomente() {
       const syncStats = await syncCarretasFromRows(dadosTratados, {
         updateExisting: true,
         deleteMissing: true,
-        deleteScopeCarretas: CARRETA_FILTRO ? [CARRETA_FILTRO] : null
+        deleteScopeCarretas: CARRETA_FILTRO.length > 0 ? CARRETA_FILTRO : null
       });
       console.log(`Sync banco: created=${syncStats.created}, updated=${syncStats.updated}, deleted=${syncStats.deleted}, existing_kept=${syncStats.existing_kept}`);
     } catch (error) {
