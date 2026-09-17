@@ -34,10 +34,19 @@ Pensado pra também rodar como .exe compilado (PyInstaller — ver
 build --onefile ele aponta pra uma pasta temporária de extração, não pra
 onde o .exe está) — por isso o cálculo de BASE_DIR abaixo checa
 `sys.frozen` e usa `sys.executable` nesse caso.
+
+Ao abrir, checa se Git e Node.js estão no PATH (os .bat já checavam isso e
+paravam com erro se não estivessem — comportamento visto ao vivo numa
+máquina nova, 2026-09-17). Se faltar algo e o `winget` (gerenciador de
+pacotes já embutido no Windows 10/11 modernos) estiver disponível,
+pergunta se pode instalar automaticamente antes de deixar rodar qualquer
+automação. Depois de instalar, é preciso FECHAR E ABRIR o programa de novo
+— o processo já aberto não relê o PATH atualizado sozinho.
 """
 
 import queue
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -76,6 +85,52 @@ AUTOMACOES = {
 # À parte de AUTOMACOES porque precisa de argumentos extras (os códigos de
 # carreta), então tem seu próprio botão + campo de texto na interface.
 BAT_CARRETAS = "rodar_carretas_especificas.bat"
+
+# Pré-requisitos que os .bat já exigem (checam via "where") — usados aqui
+# pra checar ANTES de deixar o usuário clicar em qualquer automação, e
+# oferecer instalar sozinho via winget se faltar algo. npm não entra na
+# lista à parte porque já vem junto do instalador do Node.js.
+PREREQUISITOS = [
+    {"comando": "git", "winget_id": "Git.Git", "nome": "Git"},
+    {"comando": "node", "winget_id": "OpenJS.NodeJS.LTS", "nome": "Node.js"},
+]
+
+
+def prerequisitos_faltando() -> list:
+    return [item for item in PREREQUISITOS if shutil.which(item["comando"]) is None]
+
+
+def instalar_prerequisitos(itens: list, fila: queue.Queue) -> None:
+    log = fila.put
+    try:
+        for item in itens:
+            log(f"=== Instalando {item['nome']} (winget install {item['winget_id']}) ===")
+            processo = subprocess.Popen(
+                [
+                    "winget", "install", "--id", item["winget_id"], "-e",
+                    "--silent", "--accept-package-agreements", "--accept-source-agreements",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            for linha in processo.stdout:
+                log(linha.rstrip("\n"))
+            codigo = processo.wait()
+            log(f"--- {item['nome']}: código de saída {codigo} ---")
+        log("")
+        log(
+            "Instalação concluída. FECHE E ABRA o programa de novo — o processo já "
+            "aberto não relê o PATH atualizado sozinho."
+        )
+    except Exception as erro:
+        log(f"ERRO ao instalar pré-requisitos: {erro}")
+    finally:
+        fila.put(FIM_DO_LOG)
 
 
 def rodar_bat(nome_bat: str, fila: queue.Queue, args_extras: list = None) -> None:
@@ -161,6 +216,40 @@ class Interface:
         self.fila: queue.Queue = queue.Queue()
         self.rodando = False
 
+        # Checagem roda logo depois da janela abrir (after, não no __init__
+        # direto), pra janela já aparecer na tela antes de qualquer diálogo.
+        self.root.after(300, self._checar_prerequisitos_iniciais)
+
+    def _checar_prerequisitos_iniciais(self) -> None:
+        faltando = prerequisitos_faltando()
+        if not faltando:
+            return
+
+        nomes = ", ".join(item["nome"] for item in faltando)
+        if shutil.which("winget") is None:
+            messagebox.showwarning(
+                "Pré-requisitos ausentes",
+                f"Não encontrei no PATH: {nomes}.\n\n"
+                "Não consigo instalar sozinho nesta máquina (winget não está disponível). "
+                "Instale manualmente:\n"
+                "- Git: https://git-scm.com/downloads\n"
+                "- Node.js (LTS): https://nodejs.org",
+            )
+            return
+
+        confirmar = messagebox.askyesno(
+            "Pré-requisitos ausentes",
+            f"Não encontrei no PATH: {nomes}.\n\n"
+            "Posso tentar instalar automaticamente via winget agora? "
+            "Pode pedir permissão de administrador (UAC) durante a instalação.",
+        )
+        if not confirmar:
+            return
+
+        self._iniciar(
+            instalar_prerequisitos, f"Instalação de pré-requisitos ({nomes})", (faltando, self.fila)
+        )
+
     def escrever_log(self, texto: str) -> None:
         self.log.configure(state="normal")
         self.log.insert("end", texto + "\n")
@@ -176,7 +265,7 @@ class Interface:
         if not messagebox.askyesno("Confirmar", info["confirmacao"]):
             return
 
-        self._iniciar(info["bat"], info["rotulo"])
+        self._iniciar(rodar_bat, info["rotulo"], (info["bat"], self.fila, None))
 
     def ao_clicar_carretas(self) -> None:
         if self.rodando:
@@ -202,9 +291,13 @@ class Interface:
         if not confirmar:
             return
 
-        self._iniciar(BAT_CARRETAS, f"Carretas específicas ({lista_str})", args_extras=codigos)
+        self._iniciar(rodar_bat, f"Carretas específicas ({lista_str})", (BAT_CARRETAS, self.fila, codigos))
 
-    def _iniciar(self, nome_bat: str, rotulo: str, args_extras: list = None) -> None:
+    def _iniciar(self, funcao_alvo, rotulo: str, args: tuple) -> None:
+        """`funcao_alvo` roda numa thread separada com `args` (a fila já
+        deve estar incluída em `args`, na posição certa pra cada função —
+        `rodar_bat` espera fila no meio, `instalar_prerequisitos` espera
+        fila no final)."""
         self.rodando = True
         for botao in self.botoes.values():
             botao.config(state="disabled")
@@ -214,7 +307,7 @@ class Interface:
         self.log.configure(state="disabled")
         self.escrever_log(f"Iniciando '{rotulo}'...")
 
-        threading.Thread(target=rodar_bat, args=(nome_bat, self.fila, args_extras), daemon=True).start()
+        threading.Thread(target=funcao_alvo, args=args, daemon=True).start()
         self.root.after(100, self.checar_fila)
 
     def checar_fila(self) -> None:
