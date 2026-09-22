@@ -13,7 +13,16 @@ reimplementa nada deles, pra continuar em sincronia se eles mudarem:
     ...` — um código de carreta por vez, com aspas, repetindo a flag; o
     campo de texto aceita vários códigos separados por vírgula ou quebra
     de linha, NÃO por espaço — um código sozinho pode ter espaço dentro
-    dele, ex.: "FA4 FB")
+    dele, ex.: FA4 FB, opcionalmente entre aspas duplas: "FA4 FB")
+
+rodar_bat() monta e roda a linha do cmd.exe manualmente (list2cmdline +
+aspas extra envolvendo tudo, mandado como string pro Popen) em vez de deixar
+o Python montar a lista sozinho — necessário porque, se o caminho de onde
+está instalado (BASE_DIR) E algum argumento (código de carreta) tiverem
+espaço ao mesmo tempo, a forma padrão de invocar gera 4 aspas na linha em
+vez de 2, e o cmd.exe só preserva aspas quando são EXATAMENTE 2 — fora isso
+ele descarta a primeira aspas e trunca tudo no primeiro espaço (algo como
+"'C:/Users/X' não é reconhecido..."). Reproduzido e corrigido em 2026-09-22.
 
 Os dois .bat terminam com `pause` (esperando Enter) — pensado pra quem roda
 direto no terminal conseguir ler a saída antes da janela fechar. Aqui a
@@ -138,8 +147,20 @@ def rodar_bat(nome_bat: str, fila: queue.Queue, args_extras: list = None) -> Non
     caminho_bat = BASE_DIR / nome_bat
     log(f"=== Executando {nome_bat}{' ' + ' '.join(args_extras) if args_extras else ''} ===")
     try:
+        # NÃO usar ["cmd", "/c", str(caminho_bat)] + args_extras aqui: se o
+        # caminho do .bat E algum argumento tiverem espaço (ex: instalado em
+        # "C:\Users\Fulano 2\...", carreta "CBHM6000 SS T...") a linha monta
+        # com 4 aspas em vez de 2, e o cmd.exe só preserva aspas quando são
+        # EXATAMENTE 2 (comportamento documentado dele) — fora isso ele
+        # descarta só a primeira aspas e trunca tudo no primeiro espaço
+        # (erro visto ao vivo: "'C:\Users\PCP' não é reconhecido..."). Corrigido
+        # envolvendo a linha inteira (já corretamente quotada) numa aspas
+        # extra, mandada como STRING pro Popen — como lista, o próprio
+        # Python requotaria e quebraria tudo de novo.
+        comando_interno = subprocess.list2cmdline([str(caminho_bat)] + (args_extras or []))
+        linha_completa = f'cmd /c "{comando_interno}"'
         processo = subprocess.Popen(
-            ["cmd", "/c", str(caminho_bat)] + (args_extras or []),
+            linha_completa,
             cwd=BASE_DIR,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -198,9 +219,13 @@ class Interface:
         quadro_carretas = tk.LabelFrame(quadro, text="Rodar só carretas específicas", padx=8, pady=8)
         quadro_carretas.pack(fill="x", pady=(10, 0))
 
-        tk.Label(quadro_carretas, text="Códigos (separe vários por vírgula ou linha — não por espaço):").pack(
-            anchor="w"
-        )
+        tk.Label(
+            quadro_carretas,
+            text=(
+                "Códigos (separe vários por vírgula ou linha — não por espaço). Um código que "
+                'tem espaço no meio pode ser digitado entre aspas duplas, ex.: "CBHM6000 SS T...":'
+            ),
+        ).pack(anchor="w")
         self.campo_carretas = tk.Text(quadro_carretas, width=80, height=3)
         self.campo_carretas.pack(fill="x", pady=(4, 6))
 
@@ -275,7 +300,10 @@ class Interface:
         bruto = self.campo_carretas.get("1.0", "end").strip()
         # Separa por vírgula ou quebra de linha — NUNCA por espaço, porque
         # um código de carreta sozinho pode ter espaço dentro (ex. "FA4 FB").
-        codigos = [c.strip() for c in re.split(r"[,\n]", bruto) if c.strip()]
+        # Aspas duplas em volta de um código são opcionais (só uma forma
+        # mais familiar de deixar claro onde o código começa/termina) —
+        # tira elas depois de separar, não fazem parte do código de verdade.
+        codigos = [c.strip().strip('"') for c in re.split(r"[,\n]", bruto) if c.strip()]
         if not codigos:
             messagebox.showerror(
                 "Nenhuma carreta", "Digite pelo menos um código de carreta (separe vários por vírgula)."
